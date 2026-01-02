@@ -1,0 +1,108 @@
+name: "02 🧩 詳細設計 (Copilot Coding Agent)"
+description: "要件を踏まえた詳細設計をCopilotによって作成する"
+title: "[詳細設計] <機能名を記入>"
+labels: ["design", "autogen"]
+assignees: ["copilot"]
+
+body:
+    - type: markdown
+      attributes:
+          value: |
+              ### 使い方
+              1) 下で **project_identifier** を入力して Issue を作成
+              2) 作成後、Copilot に担当者を割り当てます
+              3) Copilot が設計ファイル群を生成し、PR を作成します  
+
+    - type: input
+      id: project_identifier
+      attributes:
+          label: プロジェクト識別子（必須・英数字/ハイフン）
+          description: "例: `payment-history` → `docs/payment-history/` 配下に設計一式を生成"
+          placeholder: 例）payment-history
+      validations:
+          required: true
+
+    - type: textarea
+      id: context
+      attributes:
+          label: 任意の補足（関連URL・制約など）
+          placeholder: 関連Issue/PR、運用制約、セキュリティ方針URL 等
+      validations:
+          required: false
+
+    - type: textarea
+      id: agent_instructions
+      attributes:
+          label: "⛳ エージェント向け明示指示"
+          description: "この内容はIssue本文に含まれます（必要に応じて編集可）。"
+          render: markdown
+          value: |
+              ---
+              ### ⛳ エージェント向け明示指示（Lambda × ソリューション別設計）
+              - 入力 `project_identifier` を読み取り、**各ソリューションごと**に設計を生成し、PR に含めてください。
+              - 既存がある場合は差分更新。無ければ新規作成。
+              - 共有ディレクトリ（`packages/*`, `shared/*` 等）への追加・変更は行わないでください。
+              - すべて **数値で明確化**（例：同期API p95 ≤ 250ms、SQS 可視性=30s、最大再試行=2、DynamoDB TTL=30d）。晴天/雨天シナリオを各1件以上含める。
+              - JSON プロパティは **lowerCamelCase** に統一。
+              - **マイクロサービス間インタフェース**を明確に定義し、`service-interfaces.md` と `event-catalog.md` で契約仕様を詳細化してください。
+              - 各ソリューションの `service-contracts.md` では、他サービスとの具体的なAPI・イベント契約をバージョン管理戦略と共に記述してください。
+              - IaC スカフォールドの生成は本 Issue では行いません。必要に応じて「04 🧱 共通基盤・スカフォールド生成」を利用してください。
+
+              ---
+              ### 📁 生成物（共通）
+              - `docs/{project_identifier}/design/README.md`：全体目次
+              - `docs/{project_identifier}/design/system-architecture.md`：全体アーキテクチャ（文章）
+              - `docs/{project_identifier}/design/diagrams/system-architecture.mmd`：Mermaid（C4 Container）
+              - `docs/{project_identifier}/design/openapi.yaml`：公開 API 叩き台（共通項目・エラー型を含む）
+              - `docs/{project_identifier}/design/service-interfaces.md`：マイクロサービス間インタフェース仕様（同期API・非同期イベント・通信パターン・タイムアウト・リトライ戦略）
+              - `docs/{project_identifier}/design/event-catalog.md`：サービス間イベント定義（CloudEventsスキーマ・契約・バージョニング・パーティション戦略・順序保証）
+              - `docs/{project_identifier}/design/nonfunctional.md`：NFR 数値化（ISO/IEC 25010）
+              - `docs/{project_identifier}/design/traceability.md`：要件→設計→テスト対応表
+              - `docs/{project_identifier}/design/erd.md`：データモデル（DynamoDB の場合は PK/SK・GSI・アクセスパターン）
+              - `docs/{project_identifier}/design/schema.sql`：*Aurora を使う場合のみ* DDLドラフト
+              - `docs/{project_identifier}/design/sequence-main.md`：主要フロー（晴天/雨天）
+              - `docs/{project_identifier}/design/terraform.md`：Terraform 設計詳細（モジュール構成、変数/outputs、タグ/暗号化、バックエンド、CI 設定、env 差分、参考コード）
+              - （任意）`threat-model.md` / `problem-details.md` / `state-*.md` / `observability.md` / `idempotency.md`
+
+              ---
+              ### 🧩 ソリューション別ドキュメント（各 `<solution>` ごと）
+              すべて `docs/{project_identifier}/solutions/<solution>/` に生成すること。
+              - `README.md`：責務・機能境界（Bounded Context）・依存関係（API/イベント契約のみ）
+              - `api.md`：REST エンドポイント定義（OpenAPI 断片：パス、リク/レス型、バリデーション、429/4xx/5xx の扱い）
+              - `service-contracts.md`：他サービスとのインタフェース契約（同期API・非同期イベント・SLA・バージョニング戦略）
+              - `domain-model.md`：主要エンティティ、イベント（例：`<entity>Created`）、制約、整合性戦略
+              - `ddb-design.md`（DynamoDB前提の場合）：テーブル名、PK/SK、GSI、アクセスパターン、容量計画（RCU/WCU）、TTL
+              - `sql-design.md`（Aurora使用時のみ）：主要テーブルと制約・インデックス
+              - `sequence.md`：晴天/雨天シーケンス（API Gateway → Lambda → EventBridge/SQS → 非同期処理）
+              - `errors.md`：RFC 7807/9457 準拠のエラー仕様（type/title/status/detail/instance、リトライ可否）
+              - `nonfunctional.md`：SLO/SLA 指標（例：可用性、p95 レイテンシ、スロットリング上限）、容量見積り
+              - `idempotency.md`：Idempotency-Key 設計、重複排除、再処理（DLQ からの復旧手順リンク）
+              - `runbook.md`：運用手順（アラート→診断→是正、Feature Toggle/ロールバック手順、既知の制約）
+              - `diagrams/sequence-*.mmd`：Mermaid 図（必要に応じて）
+              - `tests/contract-tests.md`：契約テストの対象とケース（公開 API・イベント・Consumer Driven Contract・バージョン互換性）
+              - `tests/integration-scenarios.md`：サービス間結合テストシナリオ（正常系・異常系・タイムアウト・リトライ）
+
+              **命名規則**  
+              - リソース名：`{project_identifier}-{env}-{solution}-{component}`  
+                例：`ticket-dev-lambda-api`, `ticket-dev-sqs-dlq`, `ticket-dev-ddb-main`
+
+              ---
+              
+              **設計上の制約（独立性の担保）**
+              - **共通基盤を前提としない**。各ソリューションは **独立デプロイ／独立データ** を保持。
+              - API 契約は境界内で完結。他サービスの内部モデルを参照しない。
+              - 外部連携は公開 API またはイベント（EventBridge/SQS）**契約**で表現し、共有モデルを導入しない。
+              - 設計ファイルは `docs/{project_identifier}/`、IaC は `infra/terraform/` に限定し、**他サービスや共有資産**には触れない。
+
+              **マイクロサービス間インタフェース設計方針**
+              - **同期通信（API）**：OpenAPI 3.0 準拠、REST原則、幂等性、タイムアウト（3-30s）、回路ブレーカーパターン
+              - **非同期通信（イベント）**：CloudEvents 仕様準拠、スキーマレジストリ、順序保証（FIFO/パーティション）、重複排除
+              - **契約ファースト**：インタフェース定義を先行し、Consumer Driven Contract によるテスト実装
+              - **バージョニング戦略**：セマンティックバージョニング、後方互換性維持期間（最低6ヶ月）、廃止ポリシー
+              - **SLA定義**：可用性（99.9%+）、レスポンス時間（p95/p99）、スループット上限、エラー率（<1%）
+              - **監視・運用**：分散トレーシング、メトリクス収集、ヘルスチェック、アラート閾値
+
+              **PR 方針**
+              - 生成/更新ファイル一覧、根拠（要件参照）、Open Questions を PR 説明欄に記載（日本語）
+      validations:
+          required: false
