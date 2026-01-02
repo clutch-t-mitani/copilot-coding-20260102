@@ -1,0 +1,140 @@
+```mermaid
+C4Container
+    title Mini-SNS System Architecture (C4 Container Diagram)
+
+    Person(user, "User", "SNS利用者")
+    
+    System_Boundary(frontend, "Frontend") {
+        Container(webapp, "Web Application", "React 18, TypeScript", "SPAフロントエンド")
+    }
+
+    System_Boundary(apigateway, "API Gateway Layer") {
+        Container(restapi, "REST API", "API Gateway", "同期HTTPリクエスト処理")
+        Container(wsapi, "WebSocket API", "API Gateway WebSocket", "リアルタイム通信")
+    }
+
+    System_Boundary(auth, "Authentication") {
+        Container(cognito, "User Pool", "Amazon Cognito", "ユーザー認証・JWT発行")
+    }
+
+    System_Boundary(services, "Microservices") {
+        Container(userservice, "User Service", "Lambda (Node.js/Python)", "ユーザー管理・プロフィール")
+        Container(postservice, "Post Service", "Lambda (Node.js/Python)", "投稿管理")
+        Container(socialservice, "Social Service", "Lambda (Node.js/Python)", "フォロー・いいね管理")
+        Container(timelineservice, "Timeline Service", "Lambda (Node.js/Python)", "タイムライン生成・配信")
+    }
+
+    System_Boundary(datastores, "Data Stores") {
+        ContainerDb(userddb, "User DB", "DynamoDB", "ユーザー情報")
+        ContainerDb(postddb, "Post DB", "DynamoDB", "投稿データ")
+        ContainerDb(socialddb, "Social DB", "DynamoDB", "フォロー関係・いいね")
+        ContainerDb(timelineddb, "Timeline DB", "DynamoDB", "タイムラインエントリ")
+        ContainerDb(cache, "Cache", "ElastiCache Redis", "タイムラインキャッシュ")
+    }
+
+    System_Boundary(messaging, "Event & Messaging") {
+        Container(eventbus, "Event Bus", "EventBridge", "イベント駆動通信")
+        ContainerQueue(sqs, "Message Queue", "SQS", "非同期処理キュー")
+        ContainerQueue(dlq, "Dead Letter Queue", "SQS DLQ", "失敗メッセージ保管")
+    }
+
+    System_Boundary(observability, "Observability") {
+        Container(cloudwatch, "CloudWatch", "Logs/Metrics/Alarms", "監視・ログ集約")
+        Container(xray, "X-Ray", "Distributed Tracing", "分散トレーシング")
+    }
+
+    Rel(user, webapp, "Uses", "HTTPS")
+    Rel(webapp, restapi, "API Calls", "HTTPS/JSON")
+    Rel(webapp, wsapi, "Real-time updates", "WSS")
+    
+    Rel(restapi, cognito, "Validates JWT", "")
+    Rel(restapi, userservice, "Routes /auth, /users", "")
+    Rel(restapi, postservice, "Routes /posts", "")
+    Rel(restapi, socialservice, "Routes /follow, /likes", "")
+    Rel(restapi, timelineservice, "Routes /timeline", "")
+    
+    Rel(wsapi, timelineservice, "WebSocket connections", "")
+    
+    Rel(userservice, userddb, "Read/Write", "")
+    Rel(userservice, cognito, "Create user", "")
+    Rel(userservice, eventbus, "Publish UserRegistered", "")
+    
+    Rel(postservice, postddb, "Read/Write", "")
+    Rel(postservice, eventbus, "Publish PostCreated/Deleted", "")
+    
+    Rel(socialservice, socialddb, "Read/Write", "")
+    Rel(socialservice, eventbus, "Publish Follow/Like events", "")
+    
+    Rel(timelineservice, timelineddb, "Read/Write", "")
+    Rel(timelineservice, cache, "Cache timeline", "")
+    Rel(timelineservice, wsapi, "Push updates", "")
+    
+    Rel(eventbus, sqs, "Routes events", "")
+    Rel(sqs, timelineservice, "Consume events", "")
+    Rel(sqs, socialservice, "Consume events", "")
+    Rel(sqs, dlq, "Failed messages", "")
+    
+    Rel(userservice, cloudwatch, "Logs/Metrics", "")
+    Rel(postservice, cloudwatch, "Logs/Metrics", "")
+    Rel(socialservice, cloudwatch, "Logs/Metrics", "")
+    Rel(timelineservice, cloudwatch, "Logs/Metrics", "")
+    
+    Rel(userservice, xray, "Traces", "")
+    Rel(postservice, xray, "Traces", "")
+    Rel(socialservice, xray, "Traces", "")
+    Rel(timelineservice, xray, "Traces", "")
+
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="2")
+```
+
+## アーキテクチャ説明
+
+### レイヤー構成
+
+1. **フロントエンド層**
+   - React SPA
+   - REST API呼び出し（同期処理）
+   - WebSocket接続（リアルタイム更新受信）
+
+2. **API Gateway層**
+   - REST API: 同期HTTPリクエスト処理、認証、レート制限
+   - WebSocket API: リアルタイム通信チャネル
+
+3. **認証層**
+   - Amazon Cognito: ユーザープール、JWT発行
+
+4. **マイクロサービス層**
+   - User Service: ユーザー管理
+   - Post Service: 投稿管理
+   - Social Service: ソーシャルグラフ管理
+   - Timeline Service: タイムライン生成・配信
+
+5. **データストア層**
+   - DynamoDB: 各サービス専用テーブル（Database per Service）
+   - ElastiCache Redis: タイムラインキャッシュ
+
+6. **メッセージング層**
+   - EventBridge: イベント駆動通信
+   - SQS: 非同期処理キュー、DLQ
+
+7. **監視層**
+   - CloudWatch: ログ、メトリクス、アラーム
+   - X-Ray: 分散トレーシング
+
+### データフローパターン
+
+#### 同期フロー（例: タイムライン取得）
+```
+User → Web App → API Gateway → Timeline Service → Redis/DynamoDB → Response
+```
+
+#### 非同期フロー（例: 投稿作成時のタイムライン更新）
+```
+User → Web App → API Gateway → Post Service → EventBridge → SQS → Timeline Service → WebSocket API → Web App
+```
+
+### コミュニケーションパターン
+
+- **同期**: REST API (HTTP/JSON)
+- **非同期**: EventBridge + SQS (CloudEvents)
+- **リアルタイム**: WebSocket (JSON over WSS)

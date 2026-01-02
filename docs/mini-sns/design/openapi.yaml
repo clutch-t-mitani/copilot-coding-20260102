@@ -1,0 +1,806 @@
+openapi: 3.0.3
+info:
+  title: Mini-SNS API
+  version: 1.0.0
+  description: |
+    Mini-SNS REST API仕様書
+    
+    ## 概要
+    ミニSNSの公開REST APIです。マイクロサービスアーキテクチャを採用しており、
+    各エンドポイントは対応するサービス（User/Post/Social/Timeline）が処理します。
+    
+    ## 認証
+    Bearer Token（JWT）認証を使用します。
+    `/auth/register`と`/auth/login`以外のエンドポイントは認証が必須です。
+    
+    ## レート制限
+    - 1ユーザーあたり100リクエスト/秒
+    - 投稿作成: 10リクエスト/分
+    
+    ## エラー形式
+    RFC 7807 Problem Details準拠のエラーレスポンスを返します。
+
+  contact:
+    name: Mini-SNS Development Team
+  license:
+    name: MIT
+
+servers:
+  - url: https://api.mini-sns.example.com/v1
+    description: 本番環境
+  - url: https://api-staging.mini-sns.example.com/v1
+    description: ステージング環境
+  - url: http://localhost:3000/v1
+    description: ローカル開発環境
+
+tags:
+  - name: Authentication
+    description: 認証関連エンドポイント（User Service）
+  - name: Users
+    description: ユーザー管理エンドポイント（User Service）
+  - name: Posts
+    description: 投稿管理エンドポイント（Post Service）
+  - name: Timeline
+    description: タイムライン取得エンドポイント（Timeline Service）
+  - name: Social
+    description: フォロー・いいね管理エンドポイント（Social Service）
+
+paths:
+  /auth/register:
+    post:
+      summary: ユーザー登録
+      description: 新規ユーザーアカウントを作成します。メールアドレスは一意である必要があります。
+      tags: [Authentication]
+      operationId: registerUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, username, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                  description: メールアドレス（一意制約）
+                username:
+                  type: string
+                  minLength: 3
+                  maxLength: 50
+                  pattern: '^[a-zA-Z0-9_-]+$'
+                  example: johndoe
+                  description: ユーザー名（一意制約、英数字・アンダースコア・ハイフンのみ）
+                password:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
+                  format: password
+                  example: SecurePass123!
+                  description: パスワード（最小8文字、英数字記号混在推奨）
+      responses:
+        '201':
+          description: 登録成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/User'
+                  token:
+                    type: string
+                    description: JWTアクセストークン
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                  refreshToken:
+                    type: string
+                    description: リフレッシュトークン
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /auth/login:
+    post:
+      summary: ログイン
+      description: メールアドレスとパスワードで認証し、JWTトークンを取得します。
+      tags: [Authentication]
+      operationId: loginUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: user@example.com
+                password:
+                  type: string
+                  format: password
+                  example: SecurePass123!
+      responses:
+        '200':
+          description: ログイン成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/User'
+                  token:
+                    type: string
+                    description: JWTアクセストークン（TTL: 1時間）
+                  refreshToken:
+                    type: string
+                    description: リフレッシュトークン（TTL: 30日）
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /auth/logout:
+    post:
+      summary: ログアウト
+      description: セッションを無効化します。
+      tags: [Authentication]
+      operationId: logoutUser
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: ログアウト成功
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/refresh:
+    post:
+      summary: トークンリフレッシュ
+      description: リフレッシュトークンを使用して新しいアクセストークンを取得します。
+      tags: [Authentication]
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken:
+                  type: string
+                  description: リフレッシュトークン
+      responses:
+        '200':
+          description: リフレッシュ成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: 新しいJWTアクセストークン
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users/{userId}:
+    get:
+      summary: ユーザープロフィール取得
+      description: 指定したユーザーのプロフィール情報を取得します。
+      tags: [Users]
+      operationId: getUserProfile
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: ユーザーID
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /users/{userId}/posts:
+    get:
+      summary: ユーザーの投稿一覧取得
+      description: 指定したユーザーの投稿一覧を取得します。
+      tags: [Users]
+      operationId: getUserPosts
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/userId'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  posts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Post'
+                  total:
+                    type: integer
+                    description: 総件数
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /posts:
+    post:
+      summary: 投稿作成
+      description: |
+        新規投稿を作成します。
+        レート制限: 10投稿/分/ユーザー
+      tags: [Posts]
+      operationId: createPost
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/idempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  minLength: 1
+                  maxLength: 280
+                  example: これはテスト投稿です！
+                  description: 投稿内容（1～280文字）
+      responses:
+        '201':
+          description: 作成成功
+          headers:
+            Location:
+              schema:
+                type: string
+              description: 作成された投稿のURI
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Post'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /posts/{postId}:
+    get:
+      summary: 投稿詳細取得
+      description: 指定した投稿の詳細情報を取得します。
+      tags: [Posts]
+      operationId: getPost
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/postId'
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: 投稿削除
+      description: |
+        自分の投稿を削除します。他ユーザーの投稿は削除できません。
+        削除時に`PostDeleted`イベントが発行され、いいね・タイムラインエントリも削除されます。
+      tags: [Posts]
+      operationId: deletePost
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/postId'
+      responses:
+        '204':
+          description: 削除成功
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /timeline:
+    get:
+      summary: タイムライン取得
+      description: |
+        フォロー中のユーザーの投稿をタイムライン形式で取得します。
+        結果はRedisにキャッシュされます（TTL: 60秒）。
+      tags: [Timeline]
+      operationId: getTimeline
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: 取得成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  posts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TimelinePost'
+                  total:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+                  cachedAt:
+                    type: string
+                    format: date-time
+                    description: キャッシュ生成時刻
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users/{userId}/follow:
+    post:
+      summary: ユーザーフォロー
+      description: |
+        指定したユーザーをフォローします。
+        自分自身はフォローできません。
+        `FollowCreated`イベントが発行され、Timeline Serviceがタイムラインを更新します。
+      tags: [Social]
+      operationId: followUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/userId'
+        - $ref: '#/components/parameters/idempotencyKey'
+      responses:
+        '201':
+          description: フォロー成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Follow'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: 既にフォロー済み
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+
+    delete:
+      summary: ユーザーアンフォロー
+      description: 指定したユーザーのフォローを解除します。
+      tags: [Social]
+      operationId: unfollowUser
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/userId'
+      responses:
+        '204':
+          description: アンフォロー成功
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /posts/{postId}/likes:
+    post:
+      summary: いいね付与
+      description: 指定した投稿に「いいね」を付与します。
+      tags: [Social]
+      operationId: likePost
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/postId'
+        - $ref: '#/components/parameters/idempotencyKey'
+      responses:
+        '201':
+          description: いいね成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Like'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 既にいいね済み
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+
+    delete:
+      summary: いいね削除
+      description: 指定した投稿の「いいね」を削除します。
+      tags: [Social]
+      operationId: unlikePost
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/postId'
+      responses:
+        '204':
+          description: いいね削除成功
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWTトークンをAuthorizationヘッダーに含めてください。
+        例: `Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...`
+
+  parameters:
+    userId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: ユーザーID（UUID形式）
+
+    postId:
+      name: postId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: 投稿ID（UUID形式）
+
+    limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      description: 取得件数（デフォルト: 20、最大: 100）
+
+    offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+      description: オフセット（デフォルト: 0）
+
+    idempotencyKey:
+      name: Idempotency-Key
+      in: header
+      schema:
+        type: string
+        format: uuid
+      description: |
+        冪等性キー（UUID形式）。同じキーでの重複リクエストは同一結果を返します。
+        推奨: 投稿作成・フォロー・いいね操作で使用
+
+  schemas:
+    User:
+      type: object
+      required: [id, email, username, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: ユーザーID
+        email:
+          type: string
+          format: email
+          description: メールアドレス
+        username:
+          type: string
+          description: ユーザー名
+        createdAt:
+          type: string
+          format: date-time
+          description: 作成日時（ISO 8601形式）
+        updatedAt:
+          type: string
+          format: date-time
+          description: 更新日時（ISO 8601形式）
+
+    UserProfile:
+      allOf:
+        - $ref: '#/components/schemas/User'
+        - type: object
+          properties:
+            postsCount:
+              type: integer
+              description: 投稿数
+              minimum: 0
+            followersCount:
+              type: integer
+              description: フォロワー数
+              minimum: 0
+            followingCount:
+              type: integer
+              description: フォロー中ユーザー数
+              minimum: 0
+            isFollowing:
+              type: boolean
+              description: ログインユーザーがフォロー中かどうか
+
+    Post:
+      type: object
+      required: [id, userId, content, likesCount, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: 投稿ID
+        userId:
+          type: string
+          format: uuid
+          description: 投稿者ID
+        content:
+          type: string
+          maxLength: 280
+          description: 投稿内容
+        likesCount:
+          type: integer
+          minimum: 0
+          description: いいね数
+        createdAt:
+          type: string
+          format: date-time
+          description: 作成日時
+        updatedAt:
+          type: string
+          format: date-time
+          description: 更新日時
+
+    PostDetail:
+      allOf:
+        - $ref: '#/components/schemas/Post'
+        - type: object
+          properties:
+            author:
+              $ref: '#/components/schemas/User'
+            isLiked:
+              type: boolean
+              description: ログインユーザーがいいね済みかどうか
+
+    TimelinePost:
+      allOf:
+        - $ref: '#/components/schemas/PostDetail'
+        - type: object
+          properties:
+            deliveredAt:
+              type: string
+              format: date-time
+              description: タイムラインに配信された日時
+
+    Follow:
+      type: object
+      required: [id, followerId, followeeId, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: フォローID
+        followerId:
+          type: string
+          format: uuid
+          description: フォローする側のユーザーID
+        followeeId:
+          type: string
+          format: uuid
+          description: フォローされる側のユーザーID
+        createdAt:
+          type: string
+          format: date-time
+          description: フォロー開始日時
+
+    Like:
+      type: object
+      required: [id, userId, postId, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: いいねID
+        userId:
+          type: string
+          format: uuid
+          description: いいねしたユーザーID
+        postId:
+          type: string
+          format: uuid
+          description: いいね対象の投稿ID
+        createdAt:
+          type: string
+          format: date-time
+          description: いいね日時
+
+    ProblemDetail:
+      type: object
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri
+          description: エラー種別を識別するURI
+          example: https://api.mini-sns.example.com/errors/validation-error
+        title:
+          type: string
+          description: 人間が読めるエラー概要
+          example: Validation Error
+        status:
+          type: integer
+          description: HTTPステータスコード
+          example: 400
+        detail:
+          type: string
+          description: エラー詳細説明
+          example: content must be between 1 and 280 characters
+        instance:
+          type: string
+          format: uri
+          description: このエラーが発生したリクエストのURI
+          example: /posts
+        traceId:
+          type: string
+          description: 分散トレーシングID（デバッグ用）
+          example: 1-5f8a7b2c-3d4e5f6g7h8i9j0k
+        retryable:
+          type: boolean
+          description: リトライ可能かどうか
+          example: false
+
+  responses:
+    BadRequest:
+      description: リクエストが不正です
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://api.mini-sns.example.com/errors/validation-error
+            title: Validation Error
+            status: 400
+            detail: content must be between 1 and 280 characters
+            retryable: false
+
+    Unauthorized:
+      description: 認証が必要です
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://api.mini-sns.example.com/errors/unauthorized
+            title: Unauthorized
+            status: 401
+            detail: Invalid or expired token
+            retryable: false
+
+    Forbidden:
+      description: 権限がありません
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://api.mini-sns.example.com/errors/forbidden
+            title: Forbidden
+            status: 403
+            detail: You are not allowed to delete this post
+            retryable: false
+
+    NotFound:
+      description: リソースが見つかりません
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://api.mini-sns.example.com/errors/not-found
+            title: Not Found
+            status: 404
+            detail: Post not found
+            retryable: false
+
+    Conflict:
+      description: リソースが既に存在します
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://api.mini-sns.example.com/errors/conflict
+            title: Conflict
+            status: 409
+            detail: Email already exists
+            retryable: false
+
+    TooManyRequests:
+      description: レート制限を超過しました
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: リトライ可能になるまでの秒数
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://api.mini-sns.example.com/errors/rate-limit-exceeded
+            title: Too Many Requests
+            status: 429
+            detail: Rate limit exceeded. Maximum 10 posts per minute.
+            retryable: true
+
+    InternalServerError:
+      description: サーバー内部エラー
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+          example:
+            type: https://api.mini-sns.example.com/errors/internal-server-error
+            title: Internal Server Error
+            status: 500
+            detail: An unexpected error occurred
+            traceId: 1-5f8a7b2c-3d4e5f6g7h8i9j0k
+            retryable: true
