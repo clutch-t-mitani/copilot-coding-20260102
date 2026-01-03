@@ -7,6 +7,10 @@ on:
     branches: [main, develop]
   workflow_dispatch:
 
+# Set minimal default permissions
+permissions:
+  contents: read
+
 env:
   NODE_VERSION: '20'
 
@@ -14,6 +18,8 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,6 +42,8 @@ jobs:
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -55,6 +63,8 @@ jobs:
   build:
     name: Build - ${{ matrix.service }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       matrix:
         service:
@@ -81,6 +91,8 @@ jobs:
   test:
     name: Test - ${{ matrix.service }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       matrix:
         service:
@@ -115,6 +127,8 @@ jobs:
   openapi:
     name: OpenAPI Validation
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -138,6 +152,8 @@ jobs:
     name: Terraform
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -163,6 +179,8 @@ jobs:
     name: Commit Lint
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
