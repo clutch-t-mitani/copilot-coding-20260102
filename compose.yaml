@@ -1,0 +1,56 @@
+services:
+  # DynamoDB Local for development
+  mini-sns-dynamodb:
+    image: amazon/dynamodb-local:latest
+    container_name: mini-sns-dynamodb
+    ports:
+      - "8000:8000"
+    command: "-jar DynamoDBLocal.jar -sharedDb -dbPath ./data"
+    volumes:
+      - dynamodb-data:/home/dynamodblocal/data
+    networks:
+      - mini-sns-network
+
+  # Redis for caching and WebSocket connection management
+  mini-sns-redis:
+    image: redis:7-alpine
+    container_name: mini-sns-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - mini-sns-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # LocalStack for AWS service emulation (optional)
+  mini-sns-localstack:
+    image: localstack/localstack:latest
+    container_name: mini-sns-localstack
+    ports:
+      - "4566:4566"  # LocalStack Gateway
+      - "4571:4571"  # Elasticsearch
+    environment:
+      - SERVICES=dynamodb,s3,lambda,apigateway,cloudwatch,eventbridge,cognito-idp,sqs
+      - DEBUG=1
+      - DATA_DIR=/tmp/localstack/data
+      - LAMBDA_EXECUTOR=docker
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - localstack-data:/tmp/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - mini-sns-network
+
+networks:
+  mini-sns-network:
+    driver: bridge
+
+volumes:
+  dynamodb-data:
+  redis-data:
+  localstack-data:
