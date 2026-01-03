@@ -20,22 +20,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Collect task files
         id: collect
         run: |
           set -euo pipefail
+          # 対象ファイルのリストアップ
           if [ -n "${{ inputs.project_identifier }}" ]; then
             mapfile -t arr < <(find "docs/${{ inputs.project_identifier }}/tasks" -maxdepth 1 -type f -name "*.md" ! -iname "README.md" 2>/dev/null | sort || true)
           else
             mapfile -t arr < <(find docs -path "*/tasks/*.md" -type f ! -iname "README.md" | sort || true)
           fi
 
+          # JSON形式に変換してOutputに格納
           json=$(printf '%s\n' "${arr[@]:-}" | jq -c -R -s 'split("\n")|map(select(length>0))')
-
           echo "list=${json}" >> "$GITHUB_OUTPUT"
 
-      - name: Create/update issues
-        if: ${{ fromJson(steps.collect.outputs.list)[0] != null }}
+      - name: Create or Update issues
+        if: ${{ steps.collect.outputs.list != '[]' && steps.collect.outputs.list != '' }}
         uses: actions/github-script@v7
         env:
           LIST_JSON: ${{ steps.collect.outputs.list }}
@@ -44,61 +46,68 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const owner = context.repo.owner;
-            const repo  = context.repo.repo;
+            const { owner, repo } = context.repo;
 
-            // --- 入力の受け取り（式は env からのみ） ---
-            const listJson = process.env.LIST_JSON || '[]';
-            let files;
-            try {
-              files = JSON.parse(listJson);
-            } catch (e) {
-              core.setFailed(`Invalid LIST_JSON: ${listJson}`);
-              return;
-            }
-            const updateExisting = String(process.env.UPDATE_EXISTING ?? 'true').toLowerCase() === 'true';
+            // 1. レート制限対策：最初に全てのオープンIssueを一括取得（検索APIを使わない）
+            core.info('Fetching all open issues for matching...');
+            const allOpenIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner,
+              repo,
+              state: 'open',
+              per_page: 100
+            });
+
+            const files = JSON.parse(process.env.LIST_JSON);
+            const updateExisting = process.env.UPDATE_EXISTING === 'true';
 
             for (const file of files) {
+              if (!fs.existsSync(file)) continue;
               const raw = fs.readFileSync(file, 'utf8');
 
-              // タイトル = 先頭の見出し行 "# "
+              // タイトルの抽出
               const titleMatch = raw.match(/^#\s+(.+)\s*$/m);
               const title = titleMatch ? titleMatch[1].trim() : `Task: ${file.split('/').pop()}`;
 
-              // Task-ID / Labels
+              // Task-ID / Labels の抽出
               const idMatch = raw.match(/^Task-ID:\s*(.+)\s*$/m);
               const taskId  = idMatch ? idMatch[1].trim() : null;
-
               const labelsMatch = raw.match(/^Labels:\s*(.+)\s*$/m);
               const labels = labelsMatch ? labelsMatch[1].split(',').map(s=>s.trim()).filter(Boolean) : ['implementation','autogen'];
 
-              // 既存Issue検索（Task-ID 優先 → タイトル）
-              let issueNum = null;
-              if (updateExisting && (taskId || title)) {
-                if (taskId) {
-                  const q = `repo:${owner}/${repo} is:issue in:body "Task-ID: ${taskId}" state:open`;
-                  const r = await github.rest.search.issuesAndPullRequests({ q });
-                  const hit = r.data.items.find(i => !i.pull_request);
-                  if (hit) issueNum = hit.number;
-                }
-                if (!issueNum && title) {
-                  const safe = title.replace(/"/g,'\\"');
-                  const q = `repo:${owner}/${repo} is:issue in:title "${safe}" state:open`;
-                  const r = await github.rest.search.issuesAndPullRequests({ q });
-                  const hit = r.data.items.find(i => !i.pull_request);
-                  if (hit) issueNum = hit.number;
-                }
+              let existingIssue = null;
+              if (updateExisting) {
+                // 2. メモリ上で既存のIssueを検索（Task-ID優先、次にタイトル）
+                existingIssue = allOpenIssues.find(i => {
+                  const hasId = taskId && i.body && i.body.includes(`Task-ID: ${taskId}`);
+                  const hasTitle = i.title === title;
+                  return hasId || hasTitle;
+                });
               }
 
               const body = raw;
 
-              if (issueNum) {
-                core.info(`Updating #${issueNum}: ${title}`);
-                await github.rest.issues.update({ owner, repo, issue_number: issueNum, title, body });
-                if (labels.length)   await github.rest.issues.setLabels({ owner, repo, issue_number: issueNum, labels });
+              if (existingIssue) {
+                core.info(`Updating #${existingIssue.number}: ${title}`);
+                await github.rest.issues.update({
+                  owner,
+                  repo,
+                  issue_number: existingIssue.number,
+                  title,
+                  body,
+                  labels // updateで一気にラベルも更新可能
+                });
               } else {
                 core.info(`Creating: ${title}`);
-                const created = await github.rest.issues.create({ owner, repo, title, body, labels });
+                const created = await github.rest.issues.create({
+                  owner,
+                  repo,
+                  title,
+                  body,
+                  labels
+                });
                 core.notice(`Created #${created.data.number} for ${file}`);
               }
+
+              // 短時間に大量の書き込みAPIを叩くのを防ぐため、わずかに待機（必要に応じて）
+              await new Promise(resolve => setTimeout(resolve, 200));
             }
