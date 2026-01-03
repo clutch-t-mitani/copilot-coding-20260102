@@ -1,0 +1,30 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Text files
+*.md text
+*.txt text
+*.json text
+*.yaml text
+*.yml text
+*.js text
+*.jsx text
+*.ts text
+*.tsx text
+*.tf text
+*.tfvars text
+
+# Shell scripts
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
