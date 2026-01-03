@@ -1,0 +1,104 @@
+name: Tasks to Issues
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_identifier:
+        description: 'docs/{project_identifier}/tasks 配下を対象（未指定なら全体）'
+        required: false
+      update_existing:
+        description: '同名タイトル or 同一 Task-ID の既存Issueを更新する'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect task files
+        id: collect
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.project_identifier }}" ]; then
+            mapfile -t arr < <(find "docs/${{ inputs.project_identifier }}/tasks" -maxdepth 1 -type f -name "*.md" ! -iname "README.md" 2>/dev/null | sort || true)
+          else
+            mapfile -t arr < <(find docs -path "*/tasks/*.md" -type f ! -iname "README.md" | sort || true)
+          fi
+
+          json=$(printf '%s\n' "${arr[@]:-}" | jq -c -R -s 'split("\n")|map(select(length>0))')
+
+          echo "list=${json}" >> "$GITHUB_OUTPUT"
+
+      - name: Create/update issues
+        if: ${{ fromJson(steps.collect.outputs.list)[0] != null }}
+        uses: actions/github-script@v7
+        env:
+          LIST_JSON: ${{ steps.collect.outputs.list }}
+          UPDATE_EXISTING: ${{ inputs.update_existing }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const owner = context.repo.owner;
+            const repo  = context.repo.repo;
+
+            // --- 入力の受け取り（式は env からのみ） ---
+            const listJson = process.env.LIST_JSON || '[]';
+            let files;
+            try {
+              files = JSON.parse(listJson);
+            } catch (e) {
+              core.setFailed(`Invalid LIST_JSON: ${listJson}`);
+              return;
+            }
+            const updateExisting = String(process.env.UPDATE_EXISTING ?? 'true').toLowerCase() === 'true';
+
+            for (const file of files) {
+              const raw = fs.readFileSync(file, 'utf8');
+
+              // タイトル = 先頭の見出し行 "# "
+              const titleMatch = raw.match(/^#\s+(.+)\s*$/m);
+              const title = titleMatch ? titleMatch[1].trim() : `Task: ${file.split('/').pop()}`;
+
+              // Task-ID / Labels
+              const idMatch = raw.match(/^Task-ID:\s*(.+)\s*$/m);
+              const taskId  = idMatch ? idMatch[1].trim() : null;
+
+              const labelsMatch = raw.match(/^Labels:\s*(.+)\s*$/m);
+              const labels = labelsMatch ? labelsMatch[1].split(',').map(s=>s.trim()).filter(Boolean) : ['implementation','autogen'];
+
+              // 既存Issue検索（Task-ID 優先 → タイトル）
+              let issueNum = null;
+              if (updateExisting && (taskId || title)) {
+                if (taskId) {
+                  const q = `repo:${owner}/${repo} is:issue in:body "Task-ID: ${taskId}" state:open`;
+                  const r = await github.rest.search.issuesAndPullRequests({ q });
+                  const hit = r.data.items.find(i => !i.pull_request);
+                  if (hit) issueNum = hit.number;
+                }
+                if (!issueNum && title) {
+                  const safe = title.replace(/"/g,'\\"');
+                  const q = `repo:${owner}/${repo} is:issue in:title "${safe}" state:open`;
+                  const r = await github.rest.search.issuesAndPullRequests({ q });
+                  const hit = r.data.items.find(i => !i.pull_request);
+                  if (hit) issueNum = hit.number;
+                }
+              }
+
+              const body = raw;
+
+              if (issueNum) {
+                core.info(`Updating #${issueNum}: ${title}`);
+                await github.rest.issues.update({ owner, repo, issue_number: issueNum, title, body });
+                if (labels.length)   await github.rest.issues.setLabels({ owner, repo, issue_number: issueNum, labels });
+              } else {
+                core.info(`Creating: ${title}`);
+                const created = await github.rest.issues.create({ owner, repo, title, body, labels });
+                core.notice(`Created #${created.data.number} for ${file}`);
+              }
+            }
