@@ -1,0 +1,139 @@
+name: "03 🧱 共通基盤・スカフォールド生成 (Copilot Coding Agent)"
+description: "リポジトリの共通基盤（開発環境/CI/Compose/DevContainer/IaC 等）を Copilot によって自動生成・更新し、PR を作成します。必要に応じてサービス別スカフォールドも生成し、並列実装が可能な状態まで整えます"
+title: "[共通基盤] <スコープ名を記入>"
+labels: ["scaffold", "platform", "autogen"]
+assignees: ["copilot"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### 使い方
+        1) 下の入力欄に `project_identifier`を指定して Issue を作成（生成対象は自動判定）
+        2) 作成後、**Copilot が自動で担当者に割り当て** られます
+        3) Copilot が共通基盤一式を生成/更新し、PR を作成します
+
+        - 既存ファイルがある場合は「差分更新（追記/補完）」を原則とし、破壊的変更は避けます
+        - 構成や詳細の説明は `docs/{project_identifier}/scaffold/` にドキュメントとして出力します
+
+  - type: input
+    id: project_identifier
+    attributes:
+      label: プロジェクト識別子（必須・英数字/ハイフン）
+      description: "例: `platform-foundation` → `docs/platform-foundation/` 配下にドキュメントを生成"
+      placeholder: 例）platform-foundation
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        #### 生成対象は自動判定
+        - 要件・設計を解析して必要要素を導出します：`docs/{project_identifier}/*.md`（要件等） と `docs/{project_identifier}/design/*`（設計一式）
+        - サービス別スカフォールドを生成します。
+        - 既存ファイルがある場合は**追記/補完**を優先し、破壊的変更は避けます
+        - 以下は自動判定の主な基準です（すべて存在しない・不足している場合に限り生成/補完）
+          - Node/TS モノレポ基盤: `.editorconfig`、`.gitattributes`、`.nvmrc`/`.node-version`、`tsconfig.base.json`、workspaces の整合
+          - Lint/Format: `eslint.config.js`、Prettier 設定、`commitlint.config.js`、`husky` hooks（`prepare`含む）
+          - CI: `.github/workflows/ci.yml`（install→build→lint→test、必要に応じ `terraform fmt/validate/plan`）
+          - Renovate: `renovate.json`/`renovate.json5`
+          - DevContainer: `.devcontainer/devcontainer.json` と関連 `Dockerfile`
+          - Docker Compose: `compose.yaml` と `.env.example`（開発用ミドルウェアは最小限）
+          - Terraform: `infra/terraform/` 直下と `envs/{dev,stg,prod}/` の基本ファイル群
+          - Release: `semantic-release`/`changelog` 設定
+          - サービス雛形: `services/<name>/` が存在しない場合のみ、必要性が推定できるときに最小構成を作成
+
+  - type: textarea
+    id: agent_instructions
+    attributes:
+      label: "⛳ エージェント向け明示指示"
+      description: "この内容はIssue本文に含まれます（必要に応じて編集可）。"
+      render: markdown
+      value: |
+        ---
+        ### ⛳ エージェント向け明示指示（共通基盤・スカフォールド生成）
+        既に作成済みの要件と設計を解析し、必要な生成対象を**自動判定**したうえで共通基盤を生成/更新し、PR に含めてください。
+        各サービスについて**並列実装が可能になる水準**までスカフォールドを整備してください。
+        サービス間の並列実装によってコンフリクトが発生しないことを目的とします。
+
+        #### 入力解析
+        - 次のドキュメントを解析し、必要な基盤/設定を導出してください：
+          - `docs/{project_identifier}/*.md`（要件・運用方針・非機能等）
+          - `docs/{project_identifier}/design/*`（設計一式：OpenAPI、非機能、シーケンス、Terraform設計 等）
+        - 解析結果に基づき、以下の例のようにスカフォールド方針を決定します：
+          - OpenAPI が存在する → CI に API のビルド/型生成/契約テストの雛形を含める
+          - Terraform 設計が存在する → `infra/terraform` の構成と CI の `fmt/validate/plan` を有効化
+          - 非機能にリンティング/コミット規約が言及 → ESLint/Prettier/commitlint/husky を設定
+          - ローカル実行要件が記載 → `compose.yaml` に必要最小限のミドルウェアを追加
+
+        - 既存ファイルがある場合は破壊的変更を避け、可能な限り**追記/補完**で対応
+        - 生成/更新の根拠・判断は `docs/{project_identifier}/scaffold/README.md` に明記
+        - シークレット/資格情報は**絶対に含めない**。必要に応じ `.env.example` を作成
+
+        ---
+        ### 📁 生成物（候補と配置）
+        - ルート共通:
+          - `.editorconfig`, `.gitattributes`, `.gitignore`
+          - `.nvmrc` または `.node-version`（Node 20/22 系を想定。既存があれば尊重）
+          - `tsconfig.base.json`（TypeScript 共通設定。既存 `tsconfig.json` と整合）
+        - モノレポ設定:
+          - `package.json` の workspaces または `pnpm-workspace.yaml`（既存に追従）
+        - Lint/Format:
+          - `eslint.config.js`（既存があれば拡張/整合）、`prettier.config.js` or `.prettierrc`
+          - `commitlint.config.js`、`husky` hooks（`prepare` スクリプト含む）
+        - CI（GitHub Actions）:
+          - `.github/workflows/ci.yml`（install→build→lint→test、選択時に `terraform fmt/validate/plan`）
+        - Renovate:
+          - `renovate.json` or `renovate.json5`（スケジュール/グルーピング/自動リベース方針）
+        - DevContainer:
+          - `.devcontainer/devcontainer.json` と `Dockerfile`（Node/terraform/gh/azurecli など必要に応じて）
+        - Docker Compose:
+          - `compose.yaml`（開発用：db/cache/queue 等を**必要最小限**で定義）、`.env.example`
+          - サービス名は `{project_identifier}-<service>` を推奨
+        - Terraform（IaC）:
+          - `infra/terraform/` にルート、`envs/{dev,stg,prod}/` に `main.tf/providers.tf/variables.tf/outputs.tf/terraform.tfvars.example`
+          - バックエンドは S3+DynamoDB を想定し、値は**ドキュメントにのみ**記載
+        - サービス別スカフォールド
+          - `services/<service>/` に **独立実行可能**な最小構成を生成
+            - `package.json`（名前は `@{project_identifier}/<service>` を推奨、scripts: `build/test/dev/lint`）
+            - `tsconfig.json`（ルート共通に継承）、`jest` 設定、`.eslintrc`（必要なら）
+            - `src/index.ts`（HTTP/API なら最小のサーバ起動、Worker なら最小のハンドラ）
+            - `README.md`（起動/テスト手順、依存、環境変数）
+          - ルート `package.json` に各サービス向けの `dev:<service> / test:<service> / build:<service>` スクリプトを追加
+          - CI の matrix に `service: [<service>...]` を設定し、ジョブ間でキャッシュを共有
+
+        ---
+        ### 📖 ドキュメント出力
+        すべて `docs/{project_identifier}/scaffold/` に出力すること。
+        - `README.md`：目的、適用範囲、採用技術、ディレクトリ構成、セットアップ手順
+        - `decisions.md`：主要な設計判断と理由（ADR 形式で簡潔）。判断根拠として解析対象（`docs/{project_identifier}/*.md`, `docs/{project_identifier}/design/*`）の参照を明記
+        - `ci.md` / `compose.md` / `terraform.md`：運用・変更手順
+        - `parallel-development.md`：サービス分割と並列開発の手順（CI matrix/Compose/スクリプトの使い分け）
+
+        ---
+        ### ✅ 命名・規約
+        - JSON/変数/ファイル内のプロパティは lowerCamelCase
+        - Docker Compose は `compose.yaml` を用い、`docker compose` コマンド前提
+        - 生成コード/設定は **可読性重視** で冗長でも明確に（コメントを適宜付与）
+
+        ---
+        ### 🔒 安全性
+        - 機密値は `.env.example` のみ。実値は入れない
+        - 既存の `eslint.config.js` や `tsconfig.json` がある場合は尊重し、差分のみ追加
+
+        ---
+        ### PR 方針
+        - 生成/更新ファイル一覧、差分の根拠、Open Questions を PR 説明欄に記載（日本語）
+        - `docs/{project_identifier}/scaffold/` の更新を含める
+
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: acceptance_parallel
+    attributes:
+      label: 検収チェック（サービス別並列実装の準備完了）
+      description: "`solutions` を指定した場合に満たすべき完了条件"
+      options:
+        - label: 各サービスに `package.json` / `tsconfig.json` / `src/index.ts` / `jest` 設定が存在
+        - label: ルート `package.json` に `dev:<service>` / `test:<service>` / `build:<service>` スクリプトが追加

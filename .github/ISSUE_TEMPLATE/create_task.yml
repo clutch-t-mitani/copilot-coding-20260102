@@ -1,0 +1,77 @@
+name: "04 🧭 タスク化 (Copilot Coding Agent)"
+description: "設計を読み取り、サービス単位のタスクMDを docs/{project_identifier}/tasks/*.md に自動生成。実装順序は定義せず、**並列実行可能**な独立タスクのみを生成。"
+title: "[タスク化] <機能群/プロジェクト名>"
+labels: ["planning", "autogen"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### 使い方
+        1) **project_identifier** を入力して Issue を作成  
+        2) **このIssueではタスク定義のみ**を行います（コード変更・PR・自動アサインは行いません）  
+        3) エージェントは設計/要件を自動探索し、**各サービスの機能に限定**したタスクを Markdown で生成します（相互依存を避け、並列実行可能な粒度に分割）  
+        ※ 出力先は `docs/{project_identifier}/tasks/*.md`（1タスク=1ファイル）
+
+  - type: input
+    id: project_identifier
+    attributes:
+      label: プロジェクト識別子（必須・英数字/ハイフン）
+      description: "例）payment-history"
+      placeholder: 例）payment-history
+    validations:
+      required: true
+
+  - type: textarea
+    id: agent_instructions
+    attributes:
+      label: "⛳ エージェント向け明示指示"
+      description: "この内容はIssue本文に含まれます（必要に応じて編集可）。"
+      render: markdown
+      value: |
+        ---
+        ### ⛳ エージェント向け明示指示（**タスク定義のみ**）
+        **前提・探索対象（自動）**
+        - `docs/{project_identifier}/*.md`(要件等)と、`docs/{project_identifier}/design/*`（設計一式） を解析  
+        - リポジトリ構成（`services/*`, `apps/*`, `packages/*` 等）から **Service** を推定
+
+        **タスク種別（Category）**
+        - `feature` … 各機能（サービス固有の実装）に限定
+
+        **やること**
+        1) **各機能（feature）**を抽出し、サービス単位で独立に実行できるように分割  
+        2) 依存関係は定義しない。依存が生じる場合はタスクを再分割して解消する  
+        3) すべて `docs/{project_identifier}/tasks/*.md` に**日本語**で生成（1タスク=1ファイル）。**コード変更やPRは行わない**
+
+        **依存は定義しない（完全並列の担保）**
+        - 各タスクは単体で開始可能に設計してください。
+        - 依存関係は定義しません。依存が必要になる場合は、タスクを再分割して依存を解消してください。
+
+        **タスクMDのフォーマット**
+        - H1：`# [Implement] <機能名>`
+        - メタ行：
+          - `Task-ID: <一意ID>`（例：`USR-API-001`, `PAY-DB-001`）
+          - `Service: <サービス名>`（必須。`shared` は使用しない）
+          - `Category: feature`
+          - `Labels: implementation, autogen`
+          - `Assignees: `（空のまま）
+          - `DesignRefs: docs/{project_identifier}/**/*.md`
+        - 本文：**Purpose / Scope・Non-Scope / Contracts / Steps（Scaffold→API&Data→Business Logic→UI→Tests） / Acceptance Criteria（Gherkin 3〜5件） / Risks / DoD**
+
+        **出力（このIssueへのコメント）**
+        - 全タスクが並列実行可能（依存なし）であることを明記
+
+        **注意**
+        - 曖昧語は禁止（例：「高速」→ *p95=200ms以下*）。  
+        - 追加の配置指定は求めず、既存構成から**一貫性のある場所**を推定。  
+        - **コード変更やPR作成は行わない。タスクMDのみ**生成可。
+        - 各マイクロサービスのタスクでは、変更範囲を最小化し、他サービスとのコンフリクトを避けることを優先する。  
+        - lockfile（例：`package-lock.json`、`yarn.lock`、`pnpm-lock.yaml`）は更新しない（依存の追加・更新が必要な場合は、別Issue/PRで個別に扱う）。
+
+  - type: checkboxes
+    id: ack
+    attributes:
+      label: 実行前チェック
+      options:
+        - label: このIssueは **タスク定義のみ**（コード実装・PRは行わない）（必須）
+          required: true
