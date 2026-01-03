@@ -1,4 +1,4 @@
-# Example terraform.tfvars for development environment
+# Example terraform.tfvars for staging environment
 # Copy this file to terraform.tfvars and adjust values as needed
 
 project_name = "mini-sns"

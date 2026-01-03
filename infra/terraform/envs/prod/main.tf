@@ -1,4 +1,4 @@
-# Main Terraform configuration for Mini-SNS development environment
+# Main Terraform configuration for Mini-SNS production environment
 # This is the entry point for the infrastructure
 
 # Placeholder for module imports
